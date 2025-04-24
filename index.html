@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <title>Platform Jumper</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #111;
+      transition: background-color 0.5s ease;
+    }
+
+    body.game-over {
+      background-color: rgba(0, 0, 0, 0.7); /* Dunkler Hintergrund */
+    }
+
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.7); /* Dunkle, halbtransparente Schicht */
+      display: none;
+      z-index: 4;
+    }
+
+    #game {
+      position: relative;
+      width: 400px;
+      height: 600px;
+      margin: auto;
+      background-color: #222;
+      overflow: hidden;
+      border: 2px solid #fff;
+    }
+
+    #player {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      background-color: red;
+      z-index: 2;
+      transition: transform 0.2s ease;
+    }
+
+    .platform {
+      position: absolute;
+      height: 10px;
+      background-color: lime;
+      z-index: 1;
+    }
+
+    .fragile {
+      background-color: orange;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .spikes {
+      position: absolute;
+      top: -15px;
+      left: 0;
+      width: 0;
+      height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-bottom: 15px solid darkred;
+    }
+
+    #lava {
+      position: absolute;
+      width: 100%;
+      height: 300px;
+      background-color: crimson;
+      top: 100%;
+      z-index: 0;
+      visibility: hidden;
+    }
+
+    #gameOver {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 3rem;
+      color: white;
+      font-family: 'Arial', sans-serif;
+      font-weight: bold;
+      text-align: center;
+      z-index: 5;
+      opacity: 0;
+      display: none;
+      background-color: #333; /* Dunkelgrauer Hintergrund */
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+    }
+
+    #gameOver span {
+      display: block;
+      font-size: 4rem;
+      color: white;
+    }
+
+    #gameOver .highlight {
+      color: yellow;
+      font-size: 5rem;
+      text-shadow: 0 0 20px yellow, 0 0 30px orange, 0 0 40px red;
+    }
+
+    #gameOver .score {
+      font-size: 2rem;
+      color: white;
+      margin-top: 20px;
+    }
+
+    .hearts {
+      display: flex;
+      gap: 5px;
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+
+    .heart {
+      width: 30px;
+      height: 30px;
+      background-color: red;
+      position: relative;
+      display: inline-block;
+      clip-path: polygon(50% 0%, 100% 35%, 80% 100%, 50% 75%, 20% 100%, 0% 35%);
+      transform: rotate(45deg);
+      z-index: 10
+    }
+
+    .heart::before,
+    .heart::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background-color: red;
+    }
+
+    .heart::before {
+      left: -15px;
+    }
+
+    .heart::after {
+      left: 15px;
+    }
+
+    .heart.empty {
+      background-color: gray;
+    }
+
+    .heart.empty::before,
+    .heart.empty::after {
+      background-color: gray;
+    }
+
+    #score {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      font-size: 1.5rem;
+      color: white;
+      z-index: 3;
+    }
+  </style>
+</head>
+<body>
+
+<div id="overlay"></div> <!-- Dunkle Schicht über dem Spiel -->
+<div id="game">
+  <div id="player"></div>
+  <div id="lava"></div>
+  <div id="gameOver">
+    <span>Game Over!</span>
+    <span class="highlight">You Lost!</span>
+    <div class="score"><span id="finalScore"></span></div> <!-- Punktestand ohne "Score" Text -->
+  </div>
+  <div id="lives" class="hearts">
+    <div class="heart"></div>
+    <div class="heart"></div>
+    <div class="heart"></div>
+  </div>
+  <div id="score">00000000</div> <!-- Punktestand Anzeige -->
+</div>
+
+<script>
+const game = document.getElementById('game');
+const player = document.getElementById('player');
+const lava = document.getElementById('lava');
+const gameOverMessage = document.getElementById('gameOver');
+const finalScoreDisplay = document.getElementById('finalScore'); // Punktestand im Game Over Fenster
+const livesDisplay = document.getElementById('lives');
+const scoreDisplay = document.getElementById('score');
+const overlay = document.getElementById('overlay'); // Die dunkle Schicht
+
+const gameWidth = game.offsetWidth;
+const gameHeight = game.offsetHeight;
+
+const gravity = 0.5;
+const jumpStrength = -12;
+const moveSpeed = 4;
+
+let posX = 180;
+let posY = 500;
+let velocityY = 0;
+let onGround = false;
+let platforms = [];
+let lavaY = gameHeight + 20;
+let lavaSpeed = 1.9;
+let lavaStarted = false;
+
+let lives = 3;
+let score = 0;
+updateHearts();
+
+function createPlatform(x, y, width, isFragile = false, hasSpikes = false) {
+  const platform = document.createElement('div');
+  platform.className = 'platform';
+  if (isFragile) platform.classList.add('fragile');
+  platform.style.left = `${x}px`;
+  platform.style.top = `${y}px`;
+  platform.style.width = `${width}px`;
+
+  if (hasSpikes) {
+    const spikes = document.createElement('div');
+    spikes.className = 'spikes';
+    const randomOffset = Math.random() * (width - 16);
+    spikes.style.left = `${randomOffset}px`;
+
+    spikes.dataset.cooldown = 'false';
+
+    platform.appendChild(spikes);
+  }
+
+  game.appendChild(platform);
+  platforms.push({ element: platform, hasSpikes, spikesElement: platform.querySelector('.spikes'), touched: false });
+}
+
+createPlatform(150, 550, 80, false, false);
+
+let lastPlatformY = 550;
+for (let i = 1; i < 6; i++) {
+  let width = Math.random() * (100 - 70) + 70;
+  width = Math.min(width, gameWidth);
+  const x = Math.random() * (gameWidth - width - 100) + 100;
+  const y = lastPlatformY - 100;
+  lastPlatformY = y;
+
+  const isFragile = Math.random() < 0.3;
+  const hasSpikes = Math.random() < 0.4;
+  createPlatform(x, y, width, isFragile, hasSpikes);
+}
+
+const keys = {
+  ArrowLeft: false,
+  ArrowRight: false,
+  Space: false,
+};
+
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'ArrowLeft') keys.ArrowLeft = true;
+  if (e.code === 'ArrowRight') keys.ArrowRight = true;
+  if (e.code === 'Space') keys.Space = true;
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'ArrowLeft') keys.ArrowLeft = false;
+  if (e.code === 'ArrowRight') keys.ArrowRight = false;
+  if (e.code === 'Space') keys.Space = false;
+});
+
+function generatePlatformsIfNeeded() {
+  let highest = Math.min(...platforms.map(p => parseInt(p.element.style.top)));
+  while (highest > -600) {
+    let width = Math.random() * (100 - 70) + 70;
+    width = Math.min(width, gameWidth);
+    const x = Math.random() * (gameWidth - width - 100) + 100;
+    const y = highest - 100;
+    lastPlatformY = y;
+
+    const isFragile = Math.random() < 0.3;
+    const hasSpikes = Math.random() < 0.4;
+    createPlatform(x, y, width, isFragile, hasSpikes);
+    highest = y;
+  }
+}
+
+function checkPlatformCollision() {
+  onGround = false;
+  platforms.forEach(p => {
+    if (p.element.classList.contains('hidden')) return;
+
+    const px = parseInt(p.element.style.left);
+    const py = parseInt(p.element.style.top);
+    const pw = p.element.offsetWidth;
+    const ph = p.element.offsetHeight;
+
+    if (
+      posX + player.offsetWidth > px &&
+      posX < px + pw &&
+      posY + player.offsetHeight >= py &&
+      posY + player.offsetHeight <= py + ph &&
+      velocityY >= 0
+    ) {
+      posY = py - player.offsetHeight;
+      velocityY = 0;
+      onGround = true;
+
+      player.classList.add('impact');
+      setTimeout(() => {
+        player.classList.remove('impact');
+      }, 200);
+
+      if (!p.touched) {
+        p.touched = true;
+        score += 100;
+        updateScore();
+      }
+
+      if (p.element.classList.contains('fragile') && !p.element.dataset.triggered) {
+        p.element.dataset.triggered = true;
+        p.element.classList.add('hidden');
+      }
+    }
+  });
+}
+
+function checkSpikeCollision() {
+  platforms.forEach(p => {
+    if (p.spikesElement) {
+      const spikes = p.spikesElement.getBoundingClientRect();
+      const playerRect = player.getBoundingClientRect();
+      
+      if (
+        playerRect.left < spikes.right &&
+        playerRect.right > spikes.left &&
+        playerRect.top < spikes.bottom &&
+        playerRect.bottom > spikes.top
+      ) {
+        if (p.spikesElement.dataset.cooldown === 'false') {
+          p.spikesElement.dataset.cooldown = 'true';
+          loseLife();
+
+          setTimeout(() => {
+            p.spikesElement.dataset.cooldown = 'false';
+          }, 1000);
+        }
+      }
+    }
+  });
+}
+
+function loseLife() {
+  if (lives > 0) {
+    lives--;
+    updateHearts();
+    player.classList.add('flashing');
+    setTimeout(() => {
+      player.classList.remove('flashing');
+    }, 300);
+
+    if (lives === 0) {
+      setTimeout(() => {
+        player.classList.add('dead');
+        gameOverMessage.style.display = 'block';
+        gameOverMessage.style.opacity = 1;
+        overlay.style.display = 'block'; // Dunkle Schicht sichtbar machen
+        finalScoreDisplay.textContent = score; // Punktestand im Game Over Fenster
+      }, 1000);
+    }
+  } else {
+    setTimeout(() => {
+      gameOverMessage.style.display = 'block';
+      gameOverMessage.style.opacity = 1;
+      overlay.style.display = 'block'; // Dunkle Schicht sichtbar machen
+      finalScoreDisplay.textContent = score; // Punktestand im Game Over Fenster
+    }, 1000);
+    setTimeout(() => {
+      location.reload();
+    }, 3000);
+  }
+}
+
+function updateHearts() {
+  const hearts = document.querySelectorAll('.heart');
+  hearts.forEach((heart, index) => {
+    if (index < lives) {
+      heart.classList.remove('empty');
+    } else {
+      heart.classList.add('empty');
+    }
+  });
+}
+
+function updateScore() {
+  scoreDisplay.textContent = score.toString().padStart(8, '0');
+}
+
+function updateLava() {
+  if (!lavaStarted) return true;
+  const lavaPlayerDistance = lavaY - (posY + player.offsetHeight);
+  if (lavaPlayerDistance > 200) {
+    lavaSpeed = 4.5;
+    lava.style.backgroundColor = 'red';
+  } else if (lavaPlayerDistance < 50) {
+    lavaSpeed = 1.0;
+    lava.style.backgroundColor = 'yellow';
+  } else {
+    lavaSpeed = 1.9;
+    lava.style.backgroundColor = 'crimson';
+  }
+  lavaY -= lavaSpeed;
+  lava.style.top = `${lavaY}px`;
+  if (lavaY < gameHeight - 20) lava.style.visibility = 'visible';
+  if (posY + player.offsetHeight >= lavaY) {
+    player.classList.add('dead');
+    setTimeout(() => {
+      gameOverMessage.style.display = 'block';
+      gameOverMessage.style.opacity = 1;
+    }, 500);
+    return false;
+  }
+  return true;
+}
+
+function gameLoop() {
+  if (keys.ArrowLeft) posX -= moveSpeed;
+  if (keys.ArrowRight) posX += moveSpeed;
+  if (keys.Space && onGround) {
+    velocityY = jumpStrength;
+    onGround = false;
+    player.classList.add('jumping');
+  } else if (onGround) {
+    player.classList.remove('jumping');
+  }
+  velocityY += gravity;
+  posY += velocityY;
+
+  checkPlatformCollision();
+  checkSpikeCollision();
+
+  if (posX < 0) posX = 0;
+  if (posX + player.offsetWidth > gameWidth) posX = gameWidth - player.offsetWidth;
+
+  if (posY < gameHeight / 2) {
+    const offset = gameHeight / 2 - posY;
+    posY = gameHeight / 2;
+    platforms.forEach(p => {
+      p.element.style.top = `${parseInt(p.element.style.top) + offset}px`;
+    });
+    lavaY += offset;
+  }
+
+  generatePlatformsIfNeeded();
+
+  if (posY > gameHeight + 100) {
+    loseLife();
+    return;
+  }
+
+  player.style.left = `${posX}px`;
+  player.style.top = `${posY}px`;
+
+  if (!lavaStarted) {
+    setTimeout(() => {
+      lavaStarted = true;
+    }, 2000);
+  }
+
+  if (!updateLava()) return;
+
+  requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+
+</body>
+</html>
